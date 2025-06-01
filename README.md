@@ -26,8 +26,16 @@ DB_NAME=your_database
 
 ## 运行
 
+### 使用uvx安装并运行（推荐）
+
+```bash
+uvx --from jewei-mysql-mcp-server jewei-mysql-mcp-server
 ```
-python run_server.py
+
+### 或者从源码运行
+
+```bash
+python -m jewei_mysql_mcp_server.server
 ```
 
 ## 功能
