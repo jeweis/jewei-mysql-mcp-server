@@ -26,7 +26,7 @@ class Config:
     @property
     def CONNECTION_STRING(self):
         """构建数据库连接字符串"""
-        return f"mysql+mysqldb://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        return f"mysql+pymysql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
 # 创建默认配置实例
 config = Config()

@@ -7,6 +7,7 @@ import json
 from typing import Dict, List, Optional, Union, Any
 from sqlalchemy import create_engine, text, MetaData, Table, Column
 from sqlalchemy.exc import SQLAlchemyError
+import pymysql  # 确保 PyMySQL 驱动可用
 
 from .app_config import config
 
