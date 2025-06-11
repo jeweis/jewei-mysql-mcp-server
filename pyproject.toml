@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jewei-mysql-mcp-server"
-version = "0.1.4"
+version = "0.1.6"
 authors = [
     {name = "Jewei", email = "your.email@example.com"}
 ]
