@@ -135,24 +135,24 @@ def get_table_info(table_name: str, schema: str = None) -> Dict[str, Any]:
         # 使用当前数据库，如果未指定schema
         current_db = schema if schema else config.DB_NAME
         
-        # 查询列信息 - 使用兼容性更好的字段
+        # 查询列信息 - 修复SQL语法，确保符合MySQL标准
         columns_sql = f"""
         SELECT 
             COLUMN_NAME AS column_name,
             DATA_TYPE AS data_type,
             CHARACTER_MAXIMUM_LENGTH AS max_length,
             CASE 
-                WHEN DATA_TYPE IN ('decimal', 'numeric', 'float', 'double') 
+                WHEN DATA_TYPE IN ('decimal', 'numeric', 'float', 'double') AND COLUMN_TYPE LIKE '%(%' 
                 THEN CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(COLUMN_TYPE, '(', -1), ',', 1) AS UNSIGNED)
                 ELSE 0 
-            END AS precision,
+            END AS `precision`,
             CASE 
                 WHEN DATA_TYPE IN ('decimal', 'numeric') AND COLUMN_TYPE LIKE '%,%' 
                 THEN CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(COLUMN_TYPE, ',', -1), ')', 1) AS UNSIGNED)
                 ELSE 0 
-            END AS scale,
+            END AS `scale`,
             IS_NULLABLE AS is_nullable,
-            COALESCE(COLUMN_COMMENT, '') AS description
+            IFNULL(COLUMN_COMMENT, '') AS description
         FROM 
             INFORMATION_SCHEMA.COLUMNS
         WHERE 
@@ -196,11 +196,11 @@ def get_table_info(table_name: str, schema: str = None) -> Dict[str, Any]:
         indexes_sql = f"""
         SELECT
             INDEX_NAME AS index_name,
-            IF(NON_UNIQUE = 0, 'UNIQUE', 'NON_UNIQUE') AS index_type,
-            NON_UNIQUE = 0 AS is_unique,
-            INDEX_NAME = 'PRIMARY' AS is_primary_key,
+            CASE WHEN NON_UNIQUE = 0 THEN 'UNIQUE' ELSE 'NON_UNIQUE' END AS index_type,
+            CASE WHEN NON_UNIQUE = 0 THEN 1 ELSE 0 END AS is_unique,
+            CASE WHEN INDEX_NAME = 'PRIMARY' THEN 1 ELSE 0 END AS is_primary_key,
             0 AS is_unique_constraint,
-            GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS columns
+            GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',') AS columns
         FROM
             INFORMATION_SCHEMA.STATISTICS
         WHERE
@@ -211,35 +211,33 @@ def get_table_info(table_name: str, schema: str = None) -> Dict[str, Any]:
             INDEX_NAME
         """
 
-        # Execute and process columns_sql
+        # 执行查询并处理结果
         columns = []
+        primary_keys = []
+        foreign_keys = []
+        indexes = []
+        
         with engine.connect() as conn:
-            columns_result = conn.execute(text(columns_sql))
             # 处理列信息
+            columns_result = conn.execute(text(columns_sql))
             for row in columns_result:
                 column = {
                     "name": row.column_name,
                     "type": row.data_type,
                     "max_length": row.max_length,
-                    "precision": row.precision,
-                    "scale": row.scale,
+                    "precision": int(row.precision) if row.precision else 0,
+                    "scale": int(row.scale) if row.scale else 0,
                     "is_nullable": row.is_nullable == "YES",
-                    "description": row.description
+                    "description": row.description or ""
                 }
                 columns.append(column)
 
-        # Execute and process primary_keys_sql
-        primary_keys = []
-        with engine.connect() as conn:
-            primary_keys_result = conn.execute(text(primary_keys_sql))
             # 处理主键信息
+            primary_keys_result = conn.execute(text(primary_keys_sql))
             primary_keys = [row.column_name for row in primary_keys_result]
 
-        # Execute and process foreign_keys_sql
-        foreign_keys = []
-        with engine.connect() as conn:
-            foreign_keys_result = conn.execute(text(foreign_keys_sql))
             # 处理外键信息
+            foreign_keys_result = conn.execute(text(foreign_keys_sql))
             for row in foreign_keys_result:
                 fk = {
                     "name": row.fk_name,
@@ -249,11 +247,8 @@ def get_table_info(table_name: str, schema: str = None) -> Dict[str, Any]:
                 }
                 foreign_keys.append(fk)
 
-        # Execute and process indexes_sql
-        indexes = []
-        with engine.connect() as conn:
-            indexes_result = conn.execute(text(indexes_sql))
             # 处理索引信息
+            indexes_result = conn.execute(text(indexes_sql))
             for row in indexes_result:
                 index = {
                     "name": row.index_name,
@@ -271,6 +266,7 @@ def get_table_info(table_name: str, schema: str = None) -> Dict[str, Any]:
             "foreign_keys": foreign_keys,
             "indexes": indexes
         }
+        
     except SQLAlchemyError as e:
         error_msg = f"获取表结构失败: {str(e)}"
         print(error_msg)
@@ -279,7 +275,7 @@ def get_table_info(table_name: str, schema: str = None) -> Dict[str, Any]:
             raise Exception("数据库连接失败，请检查数据库服务是否运行以及连接配置是否正确")
         raise Exception(error_msg)
     except Exception as e:
-        error_msg = f"获取表结构失败: {str(e)}"
+        error_msg = f"获取表结构时发生错误: {str(e)}"
         print(error_msg)
         raise Exception(error_msg)
 
