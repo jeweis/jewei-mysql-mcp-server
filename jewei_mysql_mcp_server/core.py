@@ -135,16 +135,24 @@ def get_table_info(table_name: str, schema: str = None) -> Dict[str, Any]:
         # 使用当前数据库，如果未指定schema
         current_db = schema if schema else config.DB_NAME
         
-        # 查询列信息
+        # 查询列信息 - 使用兼容性更好的字段
         columns_sql = f"""
         SELECT 
             COLUMN_NAME AS column_name,
             DATA_TYPE AS data_type,
             CHARACTER_MAXIMUM_LENGTH AS max_length,
-            NUMERIC_PRECISION AS precision,
-            NUMERIC_SCALE AS scale,
+            CASE 
+                WHEN DATA_TYPE IN ('decimal', 'numeric', 'float', 'double') 
+                THEN CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(COLUMN_TYPE, '(', -1), ',', 1) AS UNSIGNED)
+                ELSE 0 
+            END AS precision,
+            CASE 
+                WHEN DATA_TYPE IN ('decimal', 'numeric') AND COLUMN_TYPE LIKE '%,%' 
+                THEN CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(COLUMN_TYPE, ',', -1), ')', 1) AS UNSIGNED)
+                ELSE 0 
+            END AS scale,
             IS_NULLABLE AS is_nullable,
-            COLUMN_COMMENT AS description
+            COALESCE(COLUMN_COMMENT, '') AS description
         FROM 
             INFORMATION_SCHEMA.COLUMNS
         WHERE 
