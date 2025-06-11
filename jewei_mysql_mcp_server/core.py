@@ -20,9 +20,8 @@ def get_db_connection():
         try:
             print("正在创建数据库连接...")
             print(f"连接到: {config.DB_HOST}:{config.DB_PORT}, 数据库: {config.DB_NAME}, 用户: {config.DB_USER}")
-            print(f"连接字符串: {config.CONNECTION_STRING}")
             
-            # 创建引擎时设置连接池选项
+            # 创建引擎时设置连接池选项，但不立即测试连接
             engine = create_engine(
                 config.CONNECTION_STRING,
                 pool_pre_ping=True,  # 检查连接是否有效
@@ -32,101 +31,91 @@ def get_db_connection():
                 }
             )
             
-            # 测试连接
-            with engine.connect() as conn:
-                result = conn.execute(text("SELECT 1")).fetchone()
-                print(f"测试连接结果: {result}")
-                
-            print("数据库连接创建成功")
-        except SQLAlchemyError as e:
-            error_msg = f"数据库连接失败: {str(e)}"
+            print("数据库引擎创建成功（延迟连接）")
+        except Exception as e:
+            error_msg = f"数据库引擎创建失败: {str(e)}"
             print(error_msg)
-            
-            # 尝试获取更详细的错误信息
-            if hasattr(e, 'orig') and e.orig:
-                print(f"原始错误: {e.orig}")
-                if hasattr(e.orig, 'args') and e.orig.args:
-                    print(f"错误参数: {e.orig.args}")
-            
             raise Exception(error_msg)
+    
     return engine
+
+def test_db_connection():
+    """测试数据库连接是否正常"""
+    try:
+        engine = get_db_connection()
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1")).fetchone()
+            print(f"数据库连接测试成功: {result}")
+            return True
+    except Exception as e:
+        print(f"数据库连接测试失败: {str(e)}")
+        return False
 
 def execute_query(sql: str) -> Dict[str, Any]:
     """执行SQL查询并返回结果集
     
     Args:
-        sql: SQL查询语句（必须是SELECT语句）
+        sql: SQL查询语句
         
     Returns:
-        包含查询结果的字典
+        包含查询结果的字典，格式为：
+        {
+            "columns": [列名列表],
+            "rows": [行数据列表],
+            "row_count": 结果行数
+        }
     """
+    # 安全检查：只允许SELECT语句
+    sql_lower = sql.strip().lower()
+    if not sql_lower.startswith('select'):
+        raise ValueError("只允许执行SELECT语句")
+    
+    # 检查是否包含危险关键字
+    dangerous_keywords = ['insert', 'update', 'delete', 'drop', 'alter', 'create', 'truncate', 'exec', 'execute']
+    for keyword in dangerous_keywords:
+        if keyword in sql_lower:
+            raise ValueError(f"不允许使用关键字: {keyword}")
+    
     try:
-        print(f"执行SQL查询: {sql[:100]}{'...' if len(sql) > 100 else ''}")
-        # 安全检查：确保只执行SELECT语句
-        sql_lower = sql.lower().strip()
-        if not sql_lower.startswith("select"):
-            error_msg = "安全限制：只允许执行SELECT语句"
-            print(f"{error_msg}, SQL: {sql}")
-            return {
-                "error": error_msg,
-                "sql": sql
-            }
-            
-        # 检查是否包含危险操作
-        dangerous_keywords = ["insert", "update", "delete", "drop", "alter", "create", "truncate", "exec", "execute"]
-        for keyword in dangerous_keywords:
-            if f" {keyword} " in f" {sql_lower} ":
-                error_msg = f"安全限制：查询中包含禁止的关键字 '{keyword}'"
-                print(f"{error_msg}, SQL: {sql}")
-                return {
-                    "error": error_msg,
-                    "sql": sql
-                }
-        
         engine = get_db_connection()
-        
         with engine.connect() as conn:
             result = conn.execute(text(sql))
+            
             # 获取列名
             columns = list(result.keys())
             
-            # 转换结果为字典列表
-            result_rows = []
+            # 获取所有行数据
+            rows = []
             for row in result:
-                try:
-                    # 尝试使用字典推导式创建字典
-                    row_dict = {col: row[i] for i, col in enumerate(columns)}
-                    result_rows.append(row_dict)
-                except Exception as row_err:
-                    print(f"处理行数据时出错: {row_err}")
-                    # 如果出错，尝试使用其他方式
-                    try:
-                        # 尝试直接将行转换为字典
-                        row_dict = {}
-                        for i, col in enumerate(columns):
-                            try:
-                                row_dict[col] = row[i]
-                            except:
-                                row_dict[col] = None
-                        result_rows.append(row_dict)
-                    except Exception as e:
-                        print(f"处理行数据的备选方法也失败: {e}")
-                        # 最后的备选方案，只添加原始值
-                        result_rows.append({"value": str(row)})
-        
-        print(f"查询成功，返回 {len(result_rows)} 条记录")
-        return {
-            "columns": columns,
-            "rows": result_rows,
-            "row_count": len(result_rows)
-        }
+                # 将Row对象转换为列表，处理各种数据类型
+                row_data = []
+                for value in row:
+                    if value is None:
+                        row_data.append(None)
+                    elif isinstance(value, (int, float, str, bool)):
+                        row_data.append(value)
+                    else:
+                        # 对于其他类型（如datetime、decimal等），转换为字符串
+                        row_data.append(str(value))
+                rows.append(row_data)
+            
+            return {
+                "columns": columns,
+                "rows": rows,
+                "row_count": len(rows)
+            }
+            
+    except SQLAlchemyError as e:
+        error_msg = f"SQL执行错误: {str(e)}"
+        print(error_msg)
+        # 如果是连接错误，提供更友好的错误信息
+        if "Can't connect" in str(e) or "Connection refused" in str(e):
+            raise Exception("数据库连接失败，请检查数据库服务是否运行以及连接配置是否正确")
+        raise Exception(error_msg)
     except Exception as e:
         error_msg = f"查询执行失败: {str(e)}"
-        print(f"{error_msg}, SQL: {sql}")
-        return {
-            "error": str(e),
-            "sql": sql
-        }
+        print(error_msg)
+        raise Exception(error_msg)
 
 def get_table_info(table_name: str, schema: str = None) -> Dict[str, Any]:
     """获取指定表的结构信息
@@ -273,12 +262,17 @@ def get_table_info(table_name: str, schema: str = None) -> Dict[str, Any]:
             "foreign_keys": foreign_keys,
             "indexes": indexes
         }
+    except SQLAlchemyError as e:
+        error_msg = f"获取表结构失败: {str(e)}"
+        print(error_msg)
+        # 如果是连接错误，提供更友好的错误信息
+        if "Can't connect" in str(e) or "Connection refused" in str(e):
+            raise Exception("数据库连接失败，请检查数据库服务是否运行以及连接配置是否正确")
+        raise Exception(error_msg)
     except Exception as e:
         error_msg = f"获取表结构失败: {str(e)}"
         print(error_msg)
-        return {
-            "error": str(e)
-        }
+        raise Exception(error_msg)
 
 def list_show_tables(schema: str = None) -> Dict[str, Any]:
     """列出数据库中的所有表
@@ -364,13 +358,17 @@ def list_show_tables(schema: str = None) -> Dict[str, Any]:
             "tables": tables,
             "count": len(tables)
         }
+    except SQLAlchemyError as e:
+        error_msg = f"列出表失败: {str(e)}"
+        print(f"{error_msg}, 数据库: {schema if schema else config.DB_NAME}")
+        # 如果是连接错误，提供更友好的错误信息
+        if "Can't connect" in str(e) or "Connection refused" in str(e):
+            raise Exception("数据库连接失败，请检查数据库服务是否运行以及连接配置是否正确")
+        raise Exception(error_msg)
     except Exception as e:
         error_msg = f"列出表失败: {str(e)}"
         print(f"{error_msg}, 数据库: {schema if schema else config.DB_NAME}")
-        return {
-            "error": str(e),
-            "schema": schema if schema else config.DB_NAME
-        }
+        raise Exception(error_msg)
 
 def get_database_info() -> Dict[str, Any]:
     """获取数据库基本信息
@@ -415,9 +413,14 @@ def get_database_info() -> Dict[str, Any]:
                 "user": config.DB_USER
             }
         }
+    except SQLAlchemyError as e:
+        error_msg = f"获取数据库信息失败: {str(e)}"
+        print(error_msg)
+        # 如果是连接错误，提供更友好的错误信息
+        if "Can't connect" in str(e) or "Connection refused" in str(e):
+            raise Exception("数据库连接失败，请检查数据库服务是否运行以及连接配置是否正确")
+        raise Exception(error_msg)
     except Exception as e:
         error_msg = f"获取数据库信息失败: {str(e)}"
         print(error_msg)
-        return {
-            "error": str(e)
-        }
+        raise Exception(error_msg)
