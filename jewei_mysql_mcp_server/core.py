@@ -72,9 +72,10 @@ def execute_query(sql: str) -> Dict[str, Any]:
         raise ValueError("只允许执行SELECT语句")
     
     # 检查是否包含危险关键字
+    onlySqlLower = sql.lower()
     dangerous_keywords = ['insert', 'update', 'delete', 'drop', 'alter', 'create', 'truncate', 'exec', 'execute']
     for keyword in dangerous_keywords:
-        if keyword in sql_lower:
+        if keyword+' ' in onlySqlLower:
             raise ValueError(f"不允许使用关键字: {keyword}")
     
     try:
